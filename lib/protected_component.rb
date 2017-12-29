@@ -1,47 +1,38 @@
-require "binding_of_caller"
+# frozen_string_literal: true
 
-module ProtectedComponent
+require "binding_of_caller"
+require "protected_component/namespace_matcher"
+require "protected_component/class_locker"
+
+class ProtectedComponent
   DirectCallNotAllowed = Class.new(StandardError)
 
-  def self.included(klass)
-    methods = klass.instance_methods(false) + klass.private_instance_methods(false)
-    klass.class_eval do
-      methods.each do |method_name|
-        original_method = instance_method(method_name)
-        define_method(method_name) do |*args, &block|
-          calling_class = binding.of_caller(1).eval("self.class")
-          raise DirectCallNotAllowed unless namespaces_match(calling_class, klass)
-
-          original_method.bind(self).call(*args, &block)
-        end
-      end
-    end
+  def initialize(
+    extra_callers: [],
+    matcher_class: ProtectedComponent::NamespaceMatcher,
+    locker_class: ProtectedComponent::ClassLocker
+    )
+    @extra_callers = extra_callers
+    @matcher_class = matcher_class
+    @locker_class = locker_class
   end
 
-  def self.extended(klass)
-    class_methods = klass.singleton_methods(false)
-    klass.class_eval do
-      class_methods.each do |method_name|
-        original_method = singleton_method(method_name)
-        define_singleton_method(method_name) do |*args, &block|
-          calling_class = binding.of_caller(1).eval("self")
-          raise DirectCallNotAllowed unless namespaces_match(calling_class, klass)
+  def self.lock(**kwargs)
+    new.lock(**kwargs)
+  end
 
-          original_method.call(*args, &block)
-        end
-      end
-    end
+  def lock(component:)
+    matcher = matcher_class.new(
+      receiving_class: component,
+      extra_callers: extra_callers
+    )
+    locker_class.new(
+      component: component,
+      matcher: matcher
+    ).lock
   end
 
   private
 
-  def namespaces_match(klass1, klass2)
-    parent_namespace(klass1) == parent_namespace(klass2) ||
-      klass1.to_s == parent_namespace(klass2) + "Interface"
-  end
-
-  # Stolen from Rails's `deconstantize`
-  def parent_namespace(klass)
-    klass.to_s.split("::")[0..-2].join("::")
-  end
+  attr_reader :extra_callers, :matcher_class, :locker_class
 end

@@ -1,27 +1,42 @@
-require_relative "../spec_helper"
-require_relative "../../lib/protected_component"
+# frozen_string_literal: true
 
-describe ProtectedComponent do
-  # This is the main class/namespace structure we'll be testing
-  # Each other module/class is added in the contexts below
-  module Outer
-    module Inner
-      class TestInner
-        def inner_method
-          true
-        end
+require "spec_helper"
+require "protected_component"
 
-        def self.inner_class_method
-          true
-        end
+# This is the main class/namespace structure we'll be testing
+# Each other module/class is added in the contexts below
+module Outer
+  module Inner
+    class TestInner
+      def inner_method
+        true
+      end
 
-        # This must be included at the end of the file
-        include ProtectedComponent
-        extend  ProtectedComponent
+      def self.inner_class_method
+        true
+      end
+    end
+    ProtectedComponent.lock(component: TestInner)
+  end
+end
+
+module Outer
+  module Inner
+    RSpec.describe TestInner do
+      it "allows instance method calls" do
+        expect(subject.inner_method)
+          .to be(true)
+      end
+
+      it "allows class method calls" do
+        expect(described_class.inner_class_method)
+          .to be(true)
       end
     end
   end
+end
 
+RSpec.describe ProtectedComponent do
   context "inner class calls from peers in the namespace" do
     before(:each) do
       # This class is a direct sibling of TestInner
@@ -139,6 +154,55 @@ describe ProtectedComponent do
     after(:each) do
       OtherModule.send(:remove_const, :OtherClass)
       Object.send(:remove_const, :OtherModule)
+    end
+
+    it "doesn't allow instance method calls" do
+      expect { OtherModule::OtherClass.new.other_method }
+        .to raise_error(ProtectedComponent::DirectCallNotAllowed)
+    end
+
+    it "doesn't allow class method calls" do
+      expect { OtherModule::OtherClass.other_class_method }
+        .to raise_error(ProtectedComponent::DirectCallNotAllowed)
+    end
+  end
+
+  xcontext "inner class calls added after the inner class is locked" do
+    before(:each) do
+      # This class is not closely related to TestInner and is
+      # therefore not allow to make calls at all
+      module OtherModule
+        class OtherClass
+          def other_method
+            Outer::Inner::TestInner.new.new_inner_method
+          end
+
+          def self.other_class_method
+            Outer::Inner::TestInner.new_inner_class_method
+          end
+        end
+      end
+
+      module Outer
+        module Inner
+          class TestInner
+            def new_inner_method
+              true
+            end
+
+            def self.new_inner_class_method
+              true
+            end
+          end
+        end
+      end
+    end
+
+    after(:each) do
+      OtherModule.send(:remove_const, :OtherClass)
+      Object.send(:remove_const, :OtherModule)
+      # Outer::Inner::TestInner.send(:remove_method, :new_inner_method)
+      # Outer::Inner::TestInner.instance_eval("remove_method(:new_inner_class_method)")
     end
 
     it "doesn't allow instance method calls" do
